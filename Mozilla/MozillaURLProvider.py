@@ -17,16 +17,16 @@
 
 import re
 import urllib2
+import xml.etree.ElementTree as ET
 
 from autopkglib import Processor, ProcessorError
-
+from urllib import quote
 
 __all__ = ["MozillaURLProvider"]
 
 
-MOZ_BASE_URL = "http://download-origin.cdn.mozilla.net/pub/mozilla.org/"
-               #"firefox/releases")
-re_dmg = re.compile(r'a[^>]* href="(?P<filename>[^"]+\.dmg)"')
+MOZ_BASE_URL = "http://download-origin.cdn.mozilla.net"
+S3_XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
 
 
 class MozillaURLProvider(Processor):
@@ -59,37 +59,54 @@ class MozillaURLProvider(Processor):
     }
     
     __doc__ = description
+
+
+    def ns_tag(self, tagname):
+        """Helper function to format a tag as '{namespace}tagname'"""
+        return "{%s}%s" % (S3_XMLNS, tagname)
+
     
     def get_mozilla_dmg_url(self, base_url, product_name, release, locale):
+        """Return a download URL for a release by getting and parsing
+        the AWS S3 Bucket XML using a given prefix, assembled from
+        'product_name', 'release', 'locale'."""
+
         # Allow locale as both en-US and en_US.
         locale = locale.replace("_", "-")
         
         # Construct download directory URL.
         release_dir = release.lower()
         
-        index_url = "/".join(
-            (base_url, product_name, "releases", release_dir, "mac", locale))
-        #print >>sys.stderr, index_url
-        
-        # Read HTML index.
+        # Build the query string for the S3 Bucket
+        query_string = "prefix=pub/%s/releases/%s/mac/%s" % (
+            product_name, release_dir, locale)
+        bucket_url = "%s/?%s" % (base_url, query_string)
+
+        # Read S3 Bucket XML
         try:
-            f = urllib2.urlopen(index_url)
-            html = f.read()
+            f = urllib2.urlopen(bucket_url)
+            xml = f.read()
             f.close()
         except BaseException as e:
-            raise ProcessorError("Can't download %s: %s" % (index_url, e))
-        
-        # Search for download link.
-        m = re_dmg.search(html)
-        if not m:
-            raise ProcessorError(
-                "Couldn't find %s download URL in %s" 
-                % (product_name, index_url))
-        
-        # Return URL.
-        return "/".join(
-            (base_url, product_name, "releases", release_dir, "mac", locale,
-             m.group("filename")))
+            raise ProcessorError("Can't download %s: %s" % (bucket_url, e))
+
+        root = ET.fromstring(xml)
+        contents = root.findall(self.ns_tag("Contents"))
+        if not contents:
+            raise ProcessorError("Expected a 'Contents' element from S3 Bucket XML, but none found.")
+
+        # The 'Key' key is actually a relative URL to a file download
+        urls = [key.find(self.ns_tag("Key")).text for key in list(contents)]
+        if len(urls) > 1:
+            self.output("Got multiple URLs: %s" % ", ".join(urls))
+            raise ProcessorError("Got multiple 'Contents' elements. We should have only one.")
+
+        url = "%s/%s" % (MOZ_BASE_URL, urls[0])
+        # Percent-quote the path to handle spaces
+        safe_url = quote(url, safe=":/")
+
+        return safe_url
+
     
     def main(self):
         # Determine product_name, release, locale, and base_url.
