@@ -1,9 +1,10 @@
 # grahampugh-recipes
 
-A few recipes not found elsewhere. To use them, enter the following command:
+This repo has now been transferred to https://github.com/autopkg/grahampugh-recipes and will no longer be maintained in this location except for testing.  Please remove this repo from your repo-list and add the new location:
 
 ```
-autopkg repo-add grahampugh/recipes
+autopkg repo-delete grahampugh/recipes
+autopkg repo-add grahampugh-recipes
 ```
 
 ## What are all these yaml files?
